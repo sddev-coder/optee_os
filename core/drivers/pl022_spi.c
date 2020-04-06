@@ -136,11 +136,23 @@
 #define SSP_SCR_MIN		0
 #define SSP_DATASIZE_MAX	16
 
+
+static void pl022_flushfifo(struct spi_chip *chip)
+{
+	struct pl022_data *pd = container_of(chip, struct pl022_data, chip);
+
+	do {
+		while (io_read32(pd->base + SSPSR) & SSPSR_RNE)
+			io_read32(pd->base + SSPDR);
+	} while (io_read32(pd->base + SSPSR) & SSPSR_BSY);
+}
+
 static enum spi_result pl022_txrx8(struct spi_chip *chip, uint8_t *wdat,
 	uint8_t *rdat, size_t num_pkts)
 {
 	size_t i = 0;
 	size_t j = 0;
+	uint8_t reg = 0;
 	struct pl022_data *pd = container_of(chip, struct pl022_data, chip);
 
 
@@ -150,7 +162,7 @@ static enum spi_result pl022_txrx8(struct spi_chip *chip, uint8_t *wdat,
 		return SPI_ERR_CFG;
 	}
 
-	if (wdat)
+	if (wdat) {
 		while (i < num_pkts) {
 			if (io_read8(pd->base + SSPSR) & SSPSR_TNF) {
 				/* tx 1 packet */
@@ -164,11 +176,25 @@ static enum spi_result pl022_txrx8(struct spi_chip *chip, uint8_t *wdat,
 				}
 		}
 
+		while ((io_read8(pd->base + SSPSR) & SSPSR_BSY))
+			;
+
+	}
+
 	/* Capture remaining rdat not read above */
 	if (rdat) {
 		while ((j < num_pkts) &&
-		       (io_read8(pd->base + SSPSR) & SSPSR_RNE)) {
-			/* rx 1 packet */
+			(io_read8(pd->base + SSPSR) & SSPSR_BSY)) {
+			reg = io_read8(pd->base + SSPSR);
+
+			if (reg & SSPSR_RNE) {
+				/* rx 1 packet */
+				rdat[j++] = io_read8(pd->base + SSPDR);
+			}
+		}
+
+		while ((j < num_pkts) &&
+			(io_read8(pd->base + SSPSR) & SSPSR_RNE)) {
 			rdat[j++] = io_read8(pd->base + SSPDR);
 		}
 
@@ -187,6 +213,7 @@ static enum spi_result pl022_txrx16(struct spi_chip *chip, uint16_t *wdat,
 {
 	size_t i = 0;
 	size_t j = 0;
+	uint16_t reg = 0;
 	struct pl022_data *pd = container_of(chip, struct pl022_data, chip);
 
 	if (pd->data_size_bits != 16) {
@@ -195,7 +222,7 @@ static enum spi_result pl022_txrx16(struct spi_chip *chip, uint16_t *wdat,
 		return SPI_ERR_CFG;
 	}
 
-	if (wdat)
+	if (wdat) {
 		while (i < num_pkts) {
 			if (io_read8(pd->base + SSPSR) & SSPSR_TNF) {
 				/* tx 1 packet */
@@ -208,12 +235,23 @@ static enum spi_result pl022_txrx16(struct spi_chip *chip, uint16_t *wdat,
 					rdat[j++] = io_read16(pd->base + SSPDR);
 				}
 		}
+		while ((io_read8(pd->base + SSPSR) & SSPSR_BSY))
+			;
+	}
 
 	/* Capture remaining rdat not read above */
 	if (rdat) {
 		while ((j < num_pkts) &&
-		       (io_read8(pd->base + SSPSR) & SSPSR_RNE)) {
-			/* rx 1 packet */
+			(io_read8(pd->base + SSPSR) & SSPSR_BSY)) {
+			reg = io_read8(pd->base + SSPSR);
+
+			if (reg & SSPSR_RNE) {
+				/* rx 1 packet */
+				rdat[j++] = io_read16(pd->base + SSPDR);
+			}
+		}
+		while ((j < num_pkts) &&
+			(io_read8(pd->base + SSPSR) & SSPSR_RNE)) {
 			rdat[j++] = io_read16(pd->base + SSPDR);
 		}
 
@@ -498,6 +536,7 @@ static const struct spi_ops pl022_ops = {
 	.txrx8 = pl022_txrx8,
 	.txrx16 = pl022_txrx16,
 	.end = pl022_end,
+	.flushfifo = pl022_flushfifo,
 };
 KEEP_PAGER(pl022_ops);
 
